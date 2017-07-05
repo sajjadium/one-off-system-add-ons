@@ -229,7 +229,7 @@ function install() {
     readwrite_prefs.set(FALLBACK_LIMIT_PREF, defaultFallbackLimit);
 
     // report the test results to telemetry
-    TelemetryController.submitExternalPing("tls13-middlebox", {
+    TelemetryController.submitExternalPing("tls13-middlebox-v1", {
       "defaultMaxVersion": defaultMaxVersion,
       "defaultFallbackLimit": defaultFallbackLimit,
       "isNonBuiltInRootCertInstalled": isNonBuiltInRootCertInstalled(),
