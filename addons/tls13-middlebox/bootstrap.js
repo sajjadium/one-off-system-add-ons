@@ -4,6 +4,7 @@ let {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 Cu.import("resource://gre/modules/Preferences.jsm");
 Cu.import("resource://gre/modules/TelemetryController.jsm");
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const VERSION_MAX_PREF = "security.tls.version.max";
 const FALLBACK_LIMIT_PREF = "security.tls.version.fallback-limit";
@@ -11,17 +12,13 @@ const FALLBACK_LIMIT_PREF = "security.tls.version.fallback-limit";
 let readwrite_prefs = new Preferences({defaultBranch: true});
 
 // all combination of configurations we care about.
-// for is_tls13 == true we need a server that supports TLS 1.3
-// for is_tls13 == false we need a server that DOES NOT support TLS 1.3
 let configurations = [
-    {max_version: 4, fallback_limit: 4, is_tls13: true, website: "enabled.tls13.com"},
-    {max_version: 4, fallback_limit: 4, is_tls13: false, website: "disabled.tls13.com"},
-    {max_version: 4, fallback_limit: 3, is_tls13: true, website: "tls13.crypto.mozilla.org"},
-    {max_version: 4, fallback_limit: 3, is_tls13: false, website: "control.tls12.com"},
-    {max_version: 3, fallback_limit: 3, is_tls13: true, website: "www.allizom.org"},
-    {max_version: 3, fallback_limit: 3, is_tls13: false, website: "short.tls13.com"}
+    {maxVersion: 4, fallbackLimit: 4, website: "enabled.tls13.com"},
+    {maxVersion: 4, fallbackLimit: 4, website: "disabled.tls13.com"},
+    {maxVersion: 3, fallbackLimit: 3, website: "control.tls12.com"}
 ];
 
+// some fields are not available sometimes, so we have to catch the errors and return undefined.
 function getFieldValue(obj, name) {
 	try {
 		return obj[name];
@@ -58,34 +55,19 @@ function getInfo(xhr) {
 
             if (sslStatus) {
                 sslStatus.QueryInterface(Ci.nsISSLStatus);
-                let serverCert = sslStatus.serverCert;
 
-                result.certChain = [];
+                // extracting sha256 fingerprint for the leaf cert
+                result.serverCertSha256Fingerprint = getFieldValue(sslStatus.serverCert, 'sha256Fingerprint');
 
-                // extracting the certificate chain including the root CA.
-                // if isBuiltInRoot == false, it means there is middlebox on the way
-                let cert = serverCert;
-                while (cert) {
-                	result.certChain.push({
-                		certType: getFieldValue(cert, 'certType'),
-                		isBuiltInRoot: getFieldValue(cert, 'isBuiltInRoot'),
-                		isSelfSigned: getFieldValue(cert, 'isSelfSigned'),
-                		keyUsages: getFieldValue(cert, 'keyUsages')
-                	});
+                let root_cert = extractRootCert(sslStatus.serverCert);
 
-                	cert = getFieldValue(cert, 'issuer');
-                }
+                // if the root certificate is not built-in, it means that there is middlebox on the way
+                // we need both of them to identify whether it is truly a built-in root certificate
+                result.rootCertIsBuiltIn = getFieldValue(root_cert, 'isBuiltInRoot');
+                result.rootCertTokenName = getFieldValue(root_cert, 'tokenName');
 
-                // extracting some other info from the connection that are not violating privacy
-                result.certificateTransparencyStatus = getFieldValue(sslStatus, 'certificateTransparencyStatus');
-                result.cipherName = getFieldValue(sslStatus, 'cipherName');
-                result.isDomainMismatch = getFieldValue(sslStatus, 'isDomainMismatch');
-                result.isExtendedValidation = getFieldValue(sslStatus, 'isExtendedValidation');
-                result.isNotValidAtThisTime = getFieldValue(sslStatus, 'isNotValidAtThisTime');
-                result.isUntrusted = getFieldValue(sslStatus, 'isUntrusted');
-                result.keyLength = getFieldValue(sslStatus, 'keyLength');
+                // record the tls version Firefox ended up negotiating
                 result.protocolVersion = getFieldValue(sslStatus, 'protocolVersion');
-                result.secretKeyLength = getFieldValue(sslStatus, 'secretKeyLength');
             }
         }
     } catch(ex) {
@@ -97,19 +79,17 @@ function getInfo(xhr) {
 
 function makeRequest(config) {
     return new Promise(function(resolve, reject) {
-        // prepare the result and call the resolve
+        // put together the configuration and the info collected from the connection
         function reportResult(event, xhr) {
-            let output = Object.assign({result: {event: event}}, config);
-
+            let output = Object.assign({result: {event: event, responseCode: xhr.status}}, config);
             output.result = Object.assign(output.result, getInfo(xhr));
-
             resolve(output);
         }
 
         try {
             // set the configuration to the values that were passed to this function
-            readwrite_prefs.set("security.tls.version.max", config.max_version);
-            readwrite_prefs.set("security.tls.version.fallback-limit", config.fallback_limit);
+            readwrite_prefs.set(VERSION_MAX_PREF, config.maxVersion);
+            readwrite_prefs.set(FALLBACK_LIMIT_PREF, config.fallbackLimit);
 
             let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].createInstance(Ci.nsIXMLHttpRequest);
 
@@ -177,18 +157,54 @@ function hasUserSetPreference() {
 
     if (readonly_prefs.isSet(VERSION_MAX_PREF) || readonly_prefs.isSet(FALLBACK_LIMIT_PREF)) {
         // reports the current values as well as whether they were set by the user
-        TelemetryController.submitExternalPing("tls13-middlebox", {
-            max_version: {
+        TelemetryController.submitExternalPing("tls13-middlebox-v1", {
+            maxVersion: {
                 value: readonly_prefs.get(VERSION_MAX_PREF),
-                is_userset: readonly_prefs.isSet(VERSION_MAX_PREF)
+                isUserset: readonly_prefs.isSet(VERSION_MAX_PREF)
             },
-            fallback_limit: {
+            fallbackLimit: {
                 value: readonly_prefs.get(FALLBACK_LIMIT_PREF),
-                is_userset: readonly_prefs.isSet(FALLBACK_LIMIT_PREF)
-            }
+                isUserset: readonly_prefs.isSet(FALLBACK_LIMIT_PREF)
+            },
+            isNonBuiltInRootCertInstalled: isNonBuiltInRootCertInstalled()
         });
 
         return true;
+    }
+
+    return false;
+}
+
+// extracting the root certificate from the chain
+function extractRootCert(cert) {
+    let root_cert = cert;
+
+    while (getFieldValue(root_cert, 'issuer')) {
+        root_cert = getFieldValue(root_cert, 'issuer');
+    }
+
+    return root_cert;
+}
+
+// returns true if there is at least one non-builtin root certificate is installed
+function isNonBuiltInRootCertInstalled() {
+    let certDB = Cc["@mozilla.org/security/x509certdb;1"].getService(Ci.nsIX509CertDB);
+
+    var iter = certDB.getCerts().getEnumerator();
+
+    while (iter.hasMoreElements()) {
+        let cert = iter.getNext().QueryInterface(Ci.nsIX509Cert);
+
+        // extract the root certificate for the current certificate
+        let root_cert = extractRootCert(cert);
+
+        if (getFieldValue(root_cert, 'isBuiltInRoot') === false &&
+            // There are some root certificates that are built-in but their isBuiltInRoot is false.
+            // That is why we check their tokenName as well
+            getFieldValue(root_cert, 'tokenName').toLowerCase() !== "Builtin Object Token".toLowerCase()) {
+
+            return true;
+        }
     }
 
     return false;
@@ -204,18 +220,19 @@ function install() {
         return;
 
     // record the default values before the experiment starts
-    let default_max_version = readwrite_prefs.get(VERSION_MAX_PREF);
-    let default_fallback_limit = readwrite_prefs.get(FALLBACK_LIMIT_PREF);
+    let defaultMaxVersion = readwrite_prefs.get(VERSION_MAX_PREF);
+    let defaultFallbackLimit = readwrite_prefs.get(FALLBACK_LIMIT_PREF);
 
     runConfigurations().then(result => {
-        // restore the default values after experiment is over
-        readwrite_prefs.set(VERSION_MAX_PREF, default_max_version);
-        readwrite_prefs.set(FALLBACK_LIMIT_PREF, default_fallback_limit);
+        // restore the default values after the experiment is over
+        readwrite_prefs.set(VERSION_MAX_PREF, defaultMaxVersion);
+        readwrite_prefs.set(FALLBACK_LIMIT_PREF, defaultFallbackLimit);
 
-        // report the test results
+        // report the test results to telemetry
         TelemetryController.submitExternalPing("tls13-middlebox", {
-            default_max_version: default_max_version,
-            default_fallback_limit: default_fallback_limit,
+            defaultMaxVersion: defaultMaxVersion,
+            defaultFallbackLimit: defaultFallbackLimit,
+            isNonBuiltInRootCertInstalled: isNonBuiltInRootCertInstalled(),
             tests: result
         });
     });
