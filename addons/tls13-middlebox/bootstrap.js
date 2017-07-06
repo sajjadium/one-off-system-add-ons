@@ -1,13 +1,22 @@
 "use strict";
 
+const VERSION_MAX_PREF = "security.tls.version.max";
+const FALLBACK_LIMIT_PREF = "security.tls.version.fallback-limit";
+
+const CERT_USAGE_SSL_CLIENT      = 0x0001;
+const CERT_USAGE_SSL_SERVER      = 0x0002;
+const CERT_USAGE_SSL_CA          = 0x0008;
+const CERT_USAGE_EMAIL_SIGNER    = 0x0010;
+const CERT_USAGE_EMAIL_RECIPIENT = 0x0020;
+const CERT_USAGE_OBJECT_SIGNER   = 0x0040;
+
+const XHR_TIMEOUT = 10000;
+
 let {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 Cu.import("resource://gre/modules/Preferences.jsm");
 Cu.import("resource://gre/modules/TelemetryController.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-
-const VERSION_MAX_PREF = "security.tls.version.max";
-const FALLBACK_LIMIT_PREF = "security.tls.version.fallback-limit";
 
 let readwrite_prefs = new Preferences({defaultBranch: true});
 
@@ -17,13 +26,6 @@ let configurations = [
   {maxVersion: 4, fallbackLimit: 4, website: "disabled.tls13.com"},
   {maxVersion: 3, fallbackLimit: 3, website: "control.tls12.com"}
 ];
-
-const CERT_USAGE_SSL_CLIENT      = 0x0001;
-const CERT_USAGE_SSL_SERVER      = 0x0002;
-const CERT_USAGE_SSL_CA          = 0x0008;
-const CERT_USAGE_EMAIL_SIGNER    = 0x0010;
-const CERT_USAGE_EMAIL_RECIPIENT = 0x0020;
-const CERT_USAGE_OBJECT_SIGNER   = 0x0040;
 
 let certDB = Cc["@mozilla.org/security/x509certdb;1"].getService(Ci.nsIX509CertDB);
 
@@ -49,7 +51,7 @@ function nsIX509CertListToArray(list) {
   return array;
 }
 
-// veries the cert using either SSL_SERVER or SSL_CA usages and extracts the chain
+// verifies the cert using either SSL_SERVER or SSL_CA usages and extracts the chain
 // returns null in case an error occurs
 function getCertChain(cert, usage) {
   return new Promise((resolve, reject) => {
@@ -74,6 +76,8 @@ async function isNonBuiltInRootCertInstalled() {
       return true;
     }
   }
+
+  throw new Error('asdfasdf');
 
   return false;
 }
@@ -135,14 +139,11 @@ async function getInfo(xhr) {
 function makeRequest(config) {
   return new Promise((resolve, reject) => {
     // put together the configuration and the info collected from the connection
-    function reportResult(event, xhr) {
-      getInfo(xhr).then(info => {
+    async function reportResult(event, xhr) {
         let output = Object.assign({"result": {"event": event, "responseCode": xhr.status}}, config);
-        output.result = Object.assign(output.result, info);
+        output.result = Object.assign(output.result, await getInfo(xhr));
         resolve(output);
-
         return true;
-      }).catch();
     }
 
     try {
@@ -154,7 +155,7 @@ function makeRequest(config) {
 
       xhr.open("GET", `https://${config.website}`, true);
 
-      xhr.timeout = 10000;
+      xhr.timeout = XHR_TIMEOUT;
 
       xhr.channel.loadFlags |= Ci.nsIRequest.LOAD_ANONYMOUS;
       xhr.channel.loadFlags |= Ci.nsIRequest.LOAD_BYPASS_CACHE;
@@ -259,7 +260,7 @@ function install() {
 
     // report the test results to telemetry
     isNonBuiltInRootCertInstalled().then(non_builtin_result => {
-      TelemetryController.submitExternalPing("tls13-middlebox-v1", {
+      TelemetryController.submitExternalPing("tls13-middlebox", {
         "defaultMaxVersion": defaultMaxVersion,
         "defaultFallbackLimit": defaultFallbackLimit,
         "isNonBuiltInRootCertInstalled": non_builtin_result,
@@ -267,7 +268,9 @@ function install() {
       });
 
       return true;
-    }).catch();
+    }).catch(err => {
+      DEBUG('asdfdddddddddddd', err);
+    });
 
     return true;
   }).catch();
