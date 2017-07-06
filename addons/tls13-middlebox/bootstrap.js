@@ -77,8 +77,6 @@ async function isNonBuiltInRootCertInstalled() {
     }
   }
 
-  throw new Error('asdfasdf');
-
   return false;
 }
 
@@ -140,10 +138,10 @@ function makeRequest(config) {
   return new Promise((resolve, reject) => {
     // put together the configuration and the info collected from the connection
     async function reportResult(event, xhr) {
-        let output = Object.assign({"result": {"event": event, "responseCode": xhr.status}}, config);
-        output.result = Object.assign(output.result, await getInfo(xhr));
-        resolve(output);
-        return true;
+      let output = Object.assign({"result": {"event": event, "responseCode": xhr.status}}, config);
+      output.result = Object.assign(output.result, await getInfo(xhr));
+      resolve(output);
+      return true;
     }
 
     try {
@@ -163,6 +161,10 @@ function makeRequest(config) {
 
       xhr.addEventListener("load", e => {
         reportResult("load", e.target);
+      });
+
+      xhr.addEventListener("loadend", e => {
+        reportResult("loadend", e.target);
       });
 
       xhr.addEventListener("error", e => {
@@ -231,7 +233,9 @@ function hasUserSetPreference() {
       });
 
       return true;
-    }).catch();
+    }).catch(err => {
+      console.log(err);
+    });
 
     return true;
   }
@@ -269,11 +273,13 @@ function install() {
 
       return true;
     }).catch(err => {
-      DEBUG('asdfdddddddddddd', err);
+      console.log(err);
     });
 
     return true;
-  }).catch();
+  }).catch(err => {
+    console.log(err);
+  });
 }
 
 function uninstall() {}
