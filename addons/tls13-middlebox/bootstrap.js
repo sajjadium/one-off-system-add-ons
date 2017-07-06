@@ -29,6 +29,10 @@ let configurations = [
 
 let certDB = Cc["@mozilla.org/security/x509certdb;1"].getService(Ci.nsIX509CertDB);
 
+function debug(msg) {
+  console.log(msg); // eslint-disable-line no-console
+}
+
 // some fields are not available sometimes, so we have to catch the errors and return undefined.
 function getFieldValue(obj, name) {
   try {
@@ -234,7 +238,7 @@ function hasUserSetPreference() {
 
       return true;
     }).catch(err => {
-      console.log(err);
+      debug(err);
     });
 
     return true;
@@ -264,7 +268,7 @@ function install() {
 
     // report the test results to telemetry
     isNonBuiltInRootCertInstalled().then(non_builtin_result => {
-      TelemetryController.submitExternalPing("tls13-middlebox", {
+      TelemetryController.submitExternalPing("tls13-middlebox-testing", {
         "defaultMaxVersion": defaultMaxVersion,
         "defaultFallbackLimit": defaultFallbackLimit,
         "isNonBuiltInRootCertInstalled": non_builtin_result,
@@ -273,12 +277,12 @@ function install() {
 
       return true;
     }).catch(err => {
-      console.log(err);
+      debug(err);
     });
 
     return true;
   }).catch(err => {
-    console.log(err);
+    debug(err);
   });
 }
 
