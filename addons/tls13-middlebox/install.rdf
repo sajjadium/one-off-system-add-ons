@@ -13,7 +13,7 @@
       <Description>
         <em:id>{0C3A0962-5DB7-11E7-A765-68B77FA7C656}</em:id>
         <em:minVersion>54.*</em:minVersion>
-        <em:maxVersion>56.*</em:maxVersion>
+        <em:maxVersion>55.*</em:maxVersion>
       </Description>
     </em:targetApplication>
 
