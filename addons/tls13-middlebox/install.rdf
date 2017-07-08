@@ -3,7 +3,7 @@
   <Description about="urn:mozilla:install-manifest">
     <em:id>tls13-middlebox@mozilla.org</em:id>
     <em:version>1.0.0</em:version>
-    <em:type>128</em:type>
+    <em:type>2</em:type>
     <em:bootstrap>true</em:bootstrap>
     <em:unpack>false</em:unpack>
     <em:multiprocessCompatible>true</em:multiprocessCompatible>
@@ -11,7 +11,7 @@
     <!-- Firefox -->
     <em:targetApplication>
       <Description>
-        <em:id>{0C3A0962-5DB7-11E7-A765-68B77FA7C656}</em:id>
+        <em:id>{ec8030f7-c20a-464f-9b0e-13a3a9e97384}</em:id>
         <em:minVersion>54.*</em:minVersion>
         <em:maxVersion>55.*</em:maxVersion>
       </Description>
