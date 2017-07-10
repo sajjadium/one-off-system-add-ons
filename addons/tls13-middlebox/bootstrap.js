@@ -249,11 +249,7 @@ function hasUserSetPreference() {
   return false;
 }
 
-function startup() {}
-
-function shutdown() {}
-
-function install() {
+function startup() {
   // abort if either of VERSION_MAX_PREF or FALLBACK_LIMIT_PREF was set by the user
   if (hasUserSetPreference()) {
     return;
@@ -286,6 +282,11 @@ function install() {
   }).catch(err => {
     debug(err);
   });
+}
+
+function shutdown() {}
+
+function install() {
 }
 
 function uninstall() {}
