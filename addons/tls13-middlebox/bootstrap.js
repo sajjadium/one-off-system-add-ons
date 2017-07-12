@@ -237,7 +237,7 @@ function hasUserSetPreference() {
     isNonBuiltInRootCertInstalled().then(non_builtin_result => {
       TelemetryController.submitExternalPing(TELEMETRY_PING_NAME, {
         "id": PROBE_ID,
-        "type": "abort",
+        "status": "aborted",
         "maxVersion": {
           "value": readonly_prefs.get(VERSION_MAX_PREF),
           "isUserset": readonly_prefs.isSet(VERSION_MAX_PREF)
@@ -270,7 +270,7 @@ function install() {
   // send start of the test probe
   TelemetryController.submitExternalPing(TELEMETRY_PING_NAME, {
     "id": PROBE_ID,
-    "type": "start"
+    "status": "started"
   });
 
   // abort if either of VERSION_MAX_PREF or FALLBACK_LIMIT_PREF was set by the user
@@ -291,7 +291,7 @@ function install() {
     isNonBuiltInRootCertInstalled().then(non_builtin_result => {
       TelemetryController.submitExternalPing(TELEMETRY_PING_NAME, {
         "id": PROBE_ID,
-        "type": "finish",
+        "status": "finished",
         "defaultMaxVersion": defaultMaxVersion,
         "defaultFallbackLimit": defaultFallbackLimit,
         "isNonBuiltInRootCertInstalled": non_builtin_result,
