@@ -10,23 +10,27 @@ const CERT_USAGE_EMAIL_SIGNER    = 0x0010;
 const CERT_USAGE_EMAIL_RECIPIENT = 0x0020;
 const CERT_USAGE_OBJECT_SIGNER   = 0x0040;
 
+const REPEAT_COUNT = 5;
+
 const XHR_TIMEOUT = 10000;
 
-const TELEMETRY_PING_NAME = "tls13-middlebox-beta";
+const TELEMETRY_PING_NAME = "tls13-middlebox-repetition";
 
 let {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 Cu.import("resource://gre/modules/Preferences.jsm");
 Cu.import("resource://gre/modules/TelemetryController.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+Cu.import("resource://gre/modules/Timer.jsm");
 
 let readwrite_prefs = new Preferences({defaultBranch: true});
 
 // all combination of configurations we care about.
 let configurations = [
-  {maxVersion: 4, fallbackLimit: 4, website: "enabled.tls13.com"},
-  {maxVersion: 4, fallbackLimit: 4, website: "disabled.tls13.com"},
-  {maxVersion: 3, fallbackLimit: 3, website: "control.tls12.com"}
+  {maxVersion: 4, fallbackLimit: 4, website: "https://enabled.tls13.com"},
+  {maxVersion: 4, fallbackLimit: 4, website: "https://disabled.tls13.com"},
+  {maxVersion: 3, fallbackLimit: 3, website: "https://control.tls12.com"},
+  {maxVersion: 3, fallbackLimit: 3, website: "http://tls12.com"}
 ];
 
 let certDB = Cc["@mozilla.org/security/x509certdb;1"].getService(Ci.nsIX509CertDB);
@@ -153,9 +157,7 @@ function makeRequest(config) {
   return new Promise((resolve, reject) => {
     // put together the configuration and the info collected from the connection
     async function reportResult(event, xhr) {
-      let output = Object.assign({"result": {"event": event, "responseCode": xhr.status}}, config);
-      output.result = Object.assign(output.result, await getInfo(xhr));
-      resolve(output);
+      resolve(Object.assign({"event": event, "responseCode": xhr.status}, await getInfo(xhr)));
       return true;
     }
 
@@ -166,13 +168,18 @@ function makeRequest(config) {
 
       let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].createInstance(Ci.nsIXMLHttpRequest);
 
-      xhr.open("GET", `https://${config.website}`, true);
+      xhr.open("GET", config.website, true);
 
       xhr.timeout = XHR_TIMEOUT;
 
+      xhr.channel.loadFlags = 0;
       xhr.channel.loadFlags |= Ci.nsIRequest.LOAD_ANONYMOUS;
       xhr.channel.loadFlags |= Ci.nsIRequest.LOAD_BYPASS_CACHE;
       xhr.channel.loadFlags |= Ci.nsIRequest.INHIBIT_CACHING;
+      xhr.channel.loadFlags |= Ci.nsIRequest.INHIBIT_PIPELINE;
+      xhr.channel.loadFlags |= Ci.nsIRequest.INHIBIT_PERSISTENT_CACHING;
+      xhr.channel.loadFlags |= Ci.nsIRequest.LOAD_FRESH_CONNECTION;
+      xhr.channel.loadFlags |= Ci.nsIRequest.LOAD_INITIAL_DOCUMENT_URI;
 
       xhr.addEventListener("load", e => {
         reportResult("load", e.target);
@@ -217,15 +224,30 @@ function shuffleArray(original_array) {
 
 // make the request for each configuration
 async function runConfigurations() {
-  let result = [];
+  let results = [];
 
-  for (let config of shuffleArray(configurations)) {
-    // we wait until the result is ready for the current configuration
-    // and then move on to the next configuration
-    result.push(await makeRequest(config));
+  let configs = shuffleArray(configurations);
+
+  for (let c = 0; c < configs.length; c++) {
+    results.push(Object.assign(configs[c], {"results": []}));
   }
 
-  return result;
+  for (let i = 0; i < REPEAT_COUNT; i++) {
+    for (let c = 0; c < configs.length; c++) {
+      // we wait until the result is ready for the current configuration
+      // and then move on to the next configuration
+      results[c].results.push(await makeRequest(configs[c]));
+    }
+  }
+
+  return results;
+}
+
+function sendToTelemetry(status, data) {
+  TelemetryController.submitExternalPing(TELEMETRY_PING_NAME, Object.assign({
+    "id": PROBE_ID,
+    "status": status
+  }, data));
 }
 
 // check if either of VERSION_MAX_PREF or FALLBACK_LIMIT_PREF was set by the user
@@ -234,24 +256,25 @@ function hasUserSetPreference() {
 
   if (readonly_prefs.isSet(VERSION_MAX_PREF) || readonly_prefs.isSet(FALLBACK_LIMIT_PREF)) {
     // reports the current values as well as whether they were set by the user
+    let final_output = {
+      "maxVersion": {
+        "value": readonly_prefs.get(VERSION_MAX_PREF),
+        "isUserset": readonly_prefs.isSet(VERSION_MAX_PREF)
+      },
+      "fallbackLimit": {
+        "value": readonly_prefs.get(FALLBACK_LIMIT_PREF),
+        "isUserset": readonly_prefs.isSet(FALLBACK_LIMIT_PREF)
+      }
+    };
+
     isNonBuiltInRootCertInstalled().then(non_builtin_result => {
-      TelemetryController.submitExternalPing(TELEMETRY_PING_NAME, {
-        "id": PROBE_ID,
-        "status": "aborted",
-        "maxVersion": {
-          "value": readonly_prefs.get(VERSION_MAX_PREF),
-          "isUserset": readonly_prefs.isSet(VERSION_MAX_PREF)
-        },
-        "fallbackLimit": {
-          "value": readonly_prefs.get(FALLBACK_LIMIT_PREF),
-          "isUserset": readonly_prefs.isSet(FALLBACK_LIMIT_PREF)
-        },
-        "isNonBuiltInRootCertInstalled": non_builtin_result
-      });
+      final_output.isNonBuiltInRootCertInstalled = non_builtin_result;
+      sendToTelemetry("aborted", final_output);
 
       return true;
     }).catch(err => {
-      debug(err);
+      final_output.exception = err.toSource();
+      sendToTelemetry("aborted", final_output);
     });
 
     return true;
@@ -268,49 +291,51 @@ function shutdown() {
 
 function install() {
   // send start of the test probe
-  TelemetryController.submitExternalPing(TELEMETRY_PING_NAME, {
-    "id": PROBE_ID,
-    "status": "started"
-  });
+  try {
+    sendToTelemetry("started", {});
 
-  // abort if either of VERSION_MAX_PREF or FALLBACK_LIMIT_PREF was set by the user
-  if (hasUserSetPreference()) {
-    return;
-  }
+    // abort if either of VERSION_MAX_PREF or FALLBACK_LIMIT_PREF was set by the user
+    if (hasUserSetPreference()) {
+      return;
+    }
 
-  // record the default values before the experiment starts
-  let defaultMaxVersion = readwrite_prefs.get(VERSION_MAX_PREF);
-  let defaultFallbackLimit = readwrite_prefs.get(FALLBACK_LIMIT_PREF);
+    // record the default values before the experiment starts
+    let defaultMaxVersion = readwrite_prefs.get(VERSION_MAX_PREF);
+    let defaultFallbackLimit = readwrite_prefs.get(FALLBACK_LIMIT_PREF);
 
-  runConfigurations().then(tests_result => {
-    // restore the default values after the experiment is over
-    readwrite_prefs.set(VERSION_MAX_PREF, defaultMaxVersion);
-    readwrite_prefs.set(FALLBACK_LIMIT_PREF, defaultFallbackLimit);
+    runConfigurations().then(tests_result => {
+      // restore the default values after the experiment is over
+      readwrite_prefs.set(VERSION_MAX_PREF, defaultMaxVersion);
+      readwrite_prefs.set(FALLBACK_LIMIT_PREF, defaultFallbackLimit);
 
-    // report the test results to telemetry
-    isNonBuiltInRootCertInstalled().then(non_builtin_result => {
-      TelemetryController.submitExternalPing(TELEMETRY_PING_NAME, {
-        "id": PROBE_ID,
-        "status": "finished",
+      let final_output = {
         "defaultMaxVersion": defaultMaxVersion,
         "defaultFallbackLimit": defaultFallbackLimit,
-        "isNonBuiltInRootCertInstalled": non_builtin_result,
         "tests": tests_result
+      };
+
+      // report the test results to telemetry
+      isNonBuiltInRootCertInstalled().then(non_builtin_result => {
+        final_output.isNonBuiltInRootCertInstalled = non_builtin_result;
+        sendToTelemetry("finished", final_output);
+
+        return true;
+      }).catch(err => {
+        final_output.exception = err.toSource();
+        sendToTelemetry("finished", final_output);
       });
 
       return true;
     }).catch(err => {
-      debug(err);
+      // restore the default values after the experiment is over
+      readwrite_prefs.set(VERSION_MAX_PREF, defaultMaxVersion);
+      readwrite_prefs.set(FALLBACK_LIMIT_PREF, defaultFallbackLimit);
+
+      sendToTelemetry("canceled", {"exception": err.toSource()});
     });
-
-    return true;
-  }).catch(err => {
-    // restore the default values after the experiment is over
-    readwrite_prefs.set(VERSION_MAX_PREF, defaultMaxVersion);
-    readwrite_prefs.set(FALLBACK_LIMIT_PREF, defaultFallbackLimit);
-
-    debug(err);
-  });
+  } catch (ex) {
+    sendToTelemetry("canceled", {"exception": ex.toSource()});
+  }
 }
 
 function uninstall() {

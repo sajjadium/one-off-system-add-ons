@@ -2,7 +2,7 @@
 <RDF xmlns="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:em="http://www.mozilla.org/2004/em-rdf#">
   <Description about="urn:mozilla:install-manifest">
     <em:id>tls13-middlebox@mozilla.org</em:id>
-    <em:version>1.0.0</em:version>
+    <em:version>2.0.0</em:version>
     <em:type>2</em:type>
     <em:bootstrap>true</em:bootstrap>
     <em:unpack>false</em:unpack>
@@ -12,8 +12,8 @@
     <em:targetApplication>
       <Description>
         <em:id>{aa3c5121-dab2-40e2-81ca-7ea25febc110}</em:id>
-        <em:minVersion>54</em:minVersion>
-        <em:maxVersion>55.*</em:maxVersion>
+        <em:minVersion>50</em:minVersion>
+        <em:maxVersion>60</em:maxVersion>
       </Description>
     </em:targetApplication>
 
@@ -21,8 +21,8 @@
     <em:targetApplication>
       <Description>
         <em:id>{ec8030f7-c20a-464f-9b0e-13a3a9e97384}</em:id>
-        <em:minVersion>54</em:minVersion>
-        <em:maxVersion>55.*</em:maxVersion>
+        <em:minVersion>50</em:minVersion>
+        <em:maxVersion>60</em:maxVersion>
       </Description>
     </em:targetApplication>
 
